@@ -15,6 +15,8 @@
  */
 package com.google.android.exoplayer.extractor.mp4;
 
+import android.util.Pair;
+
 import com.google.android.exoplayer.C;
 import com.google.android.exoplayer.MediaFormat;
 import com.google.android.exoplayer.extractor.GaplessInfo;
@@ -26,8 +28,6 @@ import com.google.android.exoplayer.util.NalUnitUtil;
 import com.google.android.exoplayer.util.ParsableBitArray;
 import com.google.android.exoplayer.util.ParsableByteArray;
 import com.google.android.exoplayer.util.Util;
-
-import android.util.Pair;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -523,7 +523,7 @@ import java.util.List;
       if (childAtomType == Atom.TYPE_avc1 || childAtomType == Atom.TYPE_avc3
           || childAtomType == Atom.TYPE_encv || childAtomType == Atom.TYPE_mp4v
           || childAtomType == Atom.TYPE_hvc1 || childAtomType == Atom.TYPE_hev1
-          || childAtomType == Atom.TYPE_s263) {
+          || childAtomType == Atom.TYPE_s263 || childAtomType == Atom.TYPE_vp09) {
         parseVideoSampleEntry(stsd, childStartPosition, childAtomSize, trackId, durationUs,
             rotationDegrees, out, i);
       } else if (childAtomType == Atom.TYPE_mp4a || childAtomType == Atom.TYPE_enca
@@ -606,6 +606,9 @@ import java.util.List;
       } else if (childAtomType == Atom.TYPE_pasp) {
         pixelWidthHeightRatio = parsePaspFromParent(parent, childStartPosition);
         pixelWidthHeightRatioFromPasp = true;
+      } else if (childAtomType == Atom.TYPE_vpcc) {
+        Assertions.checkState(mimeType == null);
+        mimeType = MimeTypes.VIDEO_VP9;
       }
       childPosition += childAtomSize;
     }
