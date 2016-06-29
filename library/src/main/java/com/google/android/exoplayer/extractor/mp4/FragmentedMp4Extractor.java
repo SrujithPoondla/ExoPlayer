@@ -75,6 +75,9 @@ public class FragmentedMp4Extractor implements Extractor {
   private static final byte[] PIFF_SAMPLE_ENCRYPTION_BOX_EXTENDED_TYPE =
       new byte[] {-94, 57, 79, 82, 90, -101, 79, 20, -94, 68, 108, 66, 124, 100, -115, -12};
 
+  private static final byte[] PIFF_PROTECTION_SYSTEM_SPECIFIC_HEAD_BOX_EXTENDED_TYPE =
+      new byte[] {-48, -118, 79, 24, 16, -13, 74, -126, -74, -56, 50, -40, -85, -95, -125, -45};
+
   // Parser states.
   private static final int STATE_READING_ATOM_HEADER = 0;
   private static final int STATE_READING_ATOM_PAYLOAD = 1;
@@ -339,6 +342,15 @@ public class FragmentedMp4Extractor implements Extractor {
           drmInitData.put(PsshAtomUtil.parseUuid(psshData),
               new SchemeInitData(MimeTypes.VIDEO_MP4, psshData));
         }
+      } else if (child.type == Atom.TYPE_uuid) {
+        Pair<UUID, byte[]> schemeData = parseProtectionSystemSpecificHeaderBox(child.data.data);
+        if (schemeData != null) {
+          if (drmInitData == null) {
+            drmInitData = new DrmInitData.Mapped();
+          }
+          drmInitData.put(schemeData.first, new SchemeInitData(
+            MimeTypes.VIDEO_MP4, schemeData.second));
+        }
       }
     }
     if (drmInitData != null) {
@@ -395,6 +407,33 @@ public class FragmentedMp4Extractor implements Extractor {
   private void onMoofContainerAtomRead(ContainerAtom moof) throws ParserException {
     parseMoof(moof, trackBundles, flags, extendedTypeScratch);
   }
+
+  /**
+   * Parses the PIFF extension "Protection System Specific Header" 'uuid' box as described
+   * in "Portable encoding of audio-video objects: The Protected Interoperable File Format (PIFF),
+   * John A. Bocharov et al, Section 5.3.1.1.
+   *
+   * @param boxData the source data
+   * @return Pair with the UUID of the DRM system and the init data or null
+   */
+  private Pair<UUID, byte[]> parseProtectionSystemSpecificHeaderBox(byte[] boxData) {
+    ParsableByteArray atomData = new ParsableByteArray(boxData);
+    atomData.setPosition(Atom.HEADER_SIZE);
+    atomData.readBytes(extendedTypeScratch, 0, 16);
+
+    if (!Arrays.equals(extendedTypeScratch, PIFF_PROTECTION_SYSTEM_SPECIFIC_HEAD_BOX_EXTENDED_TYPE)) {
+      return null;
+    }
+    atomData.skipBytes(4); // skip atom version and flags
+
+    // Ready SystemID and the header data
+    UUID uuid = new UUID(atomData.readLong(), atomData.readLong());
+    int size = atomData.readUnsignedIntToInt();
+    byte[] data = new byte[size];
+    atomData.readBytes(data, 0, size);
+    return new Pair<>(uuid, data);
+  }
+
 
   /**
    * Parses a trex atom (defined in 14496-12).

@@ -31,6 +31,7 @@ import com.google.android.exoplayer.util.ParsableByteArray;
 import com.google.android.exoplayer.util.Util;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
@@ -38,6 +39,9 @@ import java.util.List;
  * Utility methods for parsing MP4 format atom payloads according to ISO 14496-12.
  */
 /* package */ final class AtomParsers {
+
+  private static final byte[] PIFF_TRACK_ENCRYPTION_BOX_EXTENDED_TYP =
+    new byte[] {-119, 116, -37, -50, 123, -25, 76, 81, -124, -7, 113, 72, -7, -120, 37, 84};
 
   /**
    * Parses a trak atom (defined in 14496-12).
@@ -1039,6 +1043,19 @@ import java.util.List;
         byte[] defaultKeyId = new byte[16];
         parent.readBytes(defaultKeyId, 0, defaultKeyId.length);
         return new TrackEncryptionBox(defaultIsEncrypted, defaultInitVectorSize, defaultKeyId);
+      } else if (childAtomType == Atom.TYPE_uuid) {
+        // Parses the PIFF extension "Track Encryption Box" 'uuid' box as described
+        // in "Portable encoding of audio-video objects: The Protected Interoperable File Format
+        // (PIFF),John A. Bocharov et al, Section 5.3.3.1
+        byte[] scratch = new byte[16];
+        parent.readBytes(scratch, 0, scratch.length);
+        if (Arrays.equals(scratch, PIFF_TRACK_ENCRYPTION_BOX_EXTENDED_TYP)) {
+          parent.skipBytes(4); // skip version and flags
+          parent.skipBytes(3); // skip algorithm ID
+          int defaultInitVectorSize = parent.readUnsignedByte();
+          parent.readBytes(scratch, 0, scratch.length);
+          return new TrackEncryptionBox(true, defaultInitVectorSize, scratch);
+        }
       }
       childPosition += childAtomSize;
     }
