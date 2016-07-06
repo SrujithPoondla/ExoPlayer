@@ -290,7 +290,7 @@ public class HlsChunkSource implements HlsTrackSelector.Output {
       List<Variant> variants = new ArrayList<>();
       variants.add(new Variant(baseUri, format));
       masterPlaylist = new HlsMasterPlaylist(baseUri, variants,
-          Collections.<Variant>emptyList(), Collections.<Variant>emptyList(), null, null);
+          Collections.<Variant>emptyList(), Collections.<Variant>emptyList(), null, null, null);
     }
   }
 

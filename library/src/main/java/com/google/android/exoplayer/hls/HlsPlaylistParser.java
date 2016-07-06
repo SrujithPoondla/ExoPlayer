@@ -151,6 +151,7 @@ public final class HlsPlaylistParser implements UriLoadable.Parser<HlsPlaylist> 
     int height = -1;
     String name = null;
     String muxedAudioLanguage = null;
+    String muxedAudioName = null;
     String muxedCaptionLanguage = null;
 
     boolean expectingStreamInfUrl = false;
@@ -177,13 +178,14 @@ public final class HlsPlaylistParser implements UriLoadable.Parser<HlsPlaylist> 
           // We assume all audios belong to the same group.
           String language = HlsParserUtil.parseOptionalStringAttr(line, LANGUAGE_ATTR_REGEX);
           String uri = HlsParserUtil.parseOptionalStringAttr(line, URI_ATTR_REGEX);
+          String audioName = HlsParserUtil.parseOptionalStringAttr(line, NAME_ATTR_REGEX);;
           if (uri != null) {
-            String audioName = HlsParserUtil.parseStringAttr(line, NAME_ATTR_REGEX, NAME_ATTR);
             Format format = new Format(audioName, MimeTypes.APPLICATION_M3U8, -1, -1, -1, -1, -1,
                 -1, language, codecs);
             audios.add(new Variant(uri, format));
           } else {
             muxedAudioLanguage = language;
+            muxedAudioName = audioName;
           }
         }
       } else if (line.startsWith(STREAM_INF_TAG)) {
@@ -225,7 +227,7 @@ public final class HlsPlaylistParser implements UriLoadable.Parser<HlsPlaylist> 
       }
     }
     return new HlsMasterPlaylist(baseUri, variants, audios, subtitles, muxedAudioLanguage,
-        muxedCaptionLanguage);
+      muxedAudioName, muxedCaptionLanguage);
   }
 
   private static HlsMediaPlaylist parseMediaPlaylist(LineIterator iterator, String baseUri)
