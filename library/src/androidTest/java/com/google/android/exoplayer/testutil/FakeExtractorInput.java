@@ -15,10 +15,11 @@
  */
 package com.google.android.exoplayer.testutil;
 
+import android.util.SparseBooleanArray;
+
 import com.google.android.exoplayer.C;
 import com.google.android.exoplayer.extractor.ExtractorInput;
-
-import android.util.SparseBooleanArray;
+import com.google.android.exoplayer.upstream.DataSource;
 
 import junit.framework.Assert;
 
@@ -192,8 +193,13 @@ public final class FakeExtractorInput implements ExtractorInput {
     return simulateUnknownLength ? C.LENGTH_UNBOUNDED : data.length;
   }
 
+  @Override
+  public DataSource getDataSource() {
+    return null;
+  }
+
   private boolean checkXFully(boolean allowEndOfInput, int position, int length,
-      SparseBooleanArray failedPositions) throws IOException {
+                              SparseBooleanArray failedPositions) throws IOException {
     if (simulateIOErrors && !failedPositions.get(position)) {
       failedPositions.put(position, true);
       peekPosition = readPosition;

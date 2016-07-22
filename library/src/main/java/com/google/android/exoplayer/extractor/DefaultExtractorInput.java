@@ -162,6 +162,11 @@ public final class DefaultExtractorInput implements ExtractorInput {
     return streamLength;
   }
 
+  @Override
+  public DataSource getDataSource() {
+    return dataSource;
+  }
+
   /**
    * Ensures {@code peekBuffer} is large enough to store at least {@code length} bytes from the
    * current peek position.

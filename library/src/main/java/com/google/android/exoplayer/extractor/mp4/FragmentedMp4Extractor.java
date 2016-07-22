@@ -15,6 +15,7 @@
  */
 package com.google.android.exoplayer.extractor.mp4;
 
+import android.net.Uri;
 import android.util.Log;
 import android.util.Pair;
 import android.util.SparseArray;
@@ -32,12 +33,17 @@ import com.google.android.exoplayer.extractor.SeekMap;
 import com.google.android.exoplayer.extractor.TrackOutput;
 import com.google.android.exoplayer.extractor.mp4.Atom.ContainerAtom;
 import com.google.android.exoplayer.extractor.mp4.Atom.LeafAtom;
+import com.google.android.exoplayer.upstream.DataSource;
+import com.google.android.exoplayer.upstream.DataSpec;
+import com.google.android.exoplayer.upstream.FileDataSource;
+import com.google.android.exoplayer.upstream.UriDataSource;
 import com.google.android.exoplayer.util.Assertions;
 import com.google.android.exoplayer.util.MimeTypes;
 import com.google.android.exoplayer.util.NalUnitUtil;
 import com.google.android.exoplayer.util.ParsableByteArray;
 import com.google.android.exoplayer.util.Util;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
@@ -119,6 +125,7 @@ public class FragmentedMp4Extractor implements Extractor {
 
   // Whether extractorOutput.seekMap has been invoked.
   private boolean haveOutputSeekMap;
+  private TimeMap timeMap;
 
   public FragmentedMp4Extractor() {
     this(0);
@@ -244,7 +251,8 @@ public class FragmentedMp4Extractor implements Extractor {
       currentTrackBundle = null;
       endOfMdatPosition = atomPosition + atomSize;
       if (!haveOutputSeekMap) {
-        extractorOutput.seekMap(SeekMap.UNSEEKABLE);
+        timeMap = readMfraBoxFromTail(input);
+        extractorOutput.seekMap(timeMap == null ? SeekMap.UNSEEKABLE : timeMap);
         haveOutputSeekMap = true;
       }
       parserState = STATE_READING_ENCRYPTION_DATA;
@@ -278,6 +286,149 @@ public class FragmentedMp4Extractor implements Extractor {
       parserState = STATE_READING_ATOM_PAYLOAD;
     }
 
+    return true;
+  }
+
+  /**
+   * Reads the last four bytes of the given URI and looks for an mfro box
+   * to return the offset of the surrounding mfra.
+   * </p>
+   * This is required if no sidx box exists and we want to enable seeking.
+   *
+   * @param dataSource The data source
+   * @param uri        The URI to the data
+   * @param size       The absolute size of the data source
+   * @return The offset of the mfra box or -1
+   */
+  private long readMfroBox(DataSource dataSource, Uri uri, long size) {
+    byte[] lastBox = new byte[16];
+    try {
+      dataSource.open(new DataSpec(uri, size - lastBox.length, lastBox.length, null));
+      dataSource.read(lastBox, 0, lastBox.length);
+      ParsableByteArray data = new ParsableByteArray(lastBox);
+      data.setPosition(0);
+      data.skipBytes(4); // atom Size
+      int atomType = data.readInt();
+      if (atomType == Atom.TYPE_mfro) {
+        data.skipBytes(4);
+        return data.readUnsignedInt();
+      }
+    } catch (IOException e) {
+      // ignore
+    } finally {
+      try {
+        dataSource.close();
+      } catch (IOException ignore) {
+      }
+    }
+    return -1;
+  }
+
+  private TimeMap readMfraBoxFromTail(ExtractorInput input) {
+    DataSource dataSource = input.getDataSource();
+    if (dataSource == null || !(dataSource instanceof UriDataSource)) {
+      return null;
+    }
+
+    String uriString = ((UriDataSource) dataSource).getUri();
+    if (uriString == null) {
+      return null;
+    }
+
+    Uri uri = Uri.parse(uriString);
+
+    if (!Util.isLocalFileUri(uri)) {
+      // Do this only the local file
+      return null;
+    }
+
+    try {
+      File file = new File(uri.toString());
+      long size = file.length();
+      FileDataSource source = new FileDataSource();
+      long mfraSize = readMfroBox(source, uri, size);
+      if (mfraSize <= 0) {
+        // no mfra offset found
+        return null;
+      }
+      byte[] mfraData = new byte[(int) mfraSize];
+      source.open(new DataSpec(uri, size - mfraSize, mfraData.length, null));
+      source.read(mfraData, 0, mfraData.length);
+      source.close();
+      ParsableByteArray data = new ParsableByteArray(mfraData);
+
+      data.skipBytes(4); // Skip the Atom size
+      long atomType = data.readInt();
+      if (atomType != Atom.TYPE_mfra) {
+        return null;
+      }
+      TimeMap timeMap = new TimeMap();
+      //noinspection StatementWithEmptyBody
+      while(readTfra(timeMap, data)){}
+
+      return timeMap;
+    } catch (Exception e) {
+      Log.w(TAG,
+        "Error while reading Random Access Boxes at the end of the source file: " + e.getMessage(),
+        e);
+    }
+    return null;
+  }
+
+  private boolean readTfra(TimeMap timeMap, ParsableByteArray data) {
+    data.skipBytes(4); // Skip the Atom size
+    int atomType = data.readInt();
+    if(atomType != Atom.TYPE_tfra){
+      return false;
+    }
+
+    int version = data.readUnsignedByte();
+    data.skipBytes(3); // Skip Flags
+
+    long trackId = data.readUnsignedInt();
+    TrackBundle trackBundle = trackBundles.get((int) trackId);
+    long reserved = data.readUnsignedInt();
+    int lengthSizeOfTrafNum = (int) ((reserved >> 4) & 0x3);
+    int lengthSizeOfTrunNum = (int) ((reserved >> 2) & 0x3);
+    int lengthSizeOfSampleNum = (int) (reserved & 0x3);
+    long numEntries = data.readUnsignedInt();
+
+    long[] timesUs = new long[(int) numEntries];
+    long[] offsets = new long[(int) numEntries];
+    int[] sizes = new int[(int) numEntries];
+    long[] durationsUs = new long[(int) numEntries];
+    long time = 0;
+    long offset = 0;
+    for (long i = 0; i < numEntries; i++) {
+      if (version == 1) {
+        time = data.readUnsignedLongToLong();
+        offset = data.readUnsignedLongToLong();
+      } else {
+        time = data.readUnsignedInt();
+        offset = data.readUnsignedInt();
+      }
+      time = Util.scaleLargeTimestamp(time, C.MICROS_PER_SECOND, trackBundle.track.timescale);
+
+      timesUs[(int) i] = time;
+      offsets[(int) i] = offset;
+      if (i > 0) {
+        sizes[(int) i - 1] = (int) (offset - offsets[(int) (i - 1)]);
+        durationsUs[(int) i - 1] = time - timesUs[(int) (i - 1)];
+      }
+
+      //skip the traf number trun number and sample number
+      data.skipBytes(lengthSizeOfTrafNum + 1);
+      data.skipBytes(lengthSizeOfTrunNum + 1);
+      data.skipBytes(lengthSizeOfSampleNum + 1);
+    }
+
+    // Calculate the size and duration for the last entry
+    if(numEntries >= 2) {
+      sizes[(int) numEntries - 1] = (int) (offset - offsets[(int) (numEntries - 2)]);
+      durationsUs[(int) numEntries - 1] = time - timesUs[(int) (numEntries - 2)];
+    }
+
+    timeMap.chunkIndex.put((int) trackId, new ChunkIndex(sizes, offsets, durationsUs, timesUs));
     return true;
   }
 
@@ -405,7 +556,7 @@ public class FragmentedMp4Extractor implements Extractor {
   }
 
   private void onMoofContainerAtomRead(ContainerAtom moof) throws ParserException {
-    parseMoof(moof, trackBundles, flags, extendedTypeScratch);
+    parseMoof(moof, trackBundles, flags, extendedTypeScratch, timeMap);
   }
 
   /**
@@ -461,12 +612,12 @@ public class FragmentedMp4Extractor implements Extractor {
   }
 
   private static void parseMoof(ContainerAtom moof, SparseArray<TrackBundle> trackBundleArray,
-      int flags, byte[] extendedTypeScratch) throws ParserException {
+                                int flags, byte[] extendedTypeScratch, TimeMap timeMap) throws ParserException {
     int moofContainerChildrenSize = moof.containerChildren.size();
     for (int i = 0; i < moofContainerChildrenSize; i++) {
       Atom.ContainerAtom child = moof.containerChildren.get(i);
       if (child.type == Atom.TYPE_traf) {
-        parseTraf(child, trackBundleArray, flags, extendedTypeScratch);
+        parseTraf(child, trackBundleArray, flags, extendedTypeScratch, timeMap);
       }
     }
   }
@@ -475,7 +626,7 @@ public class FragmentedMp4Extractor implements Extractor {
    * Parses a traf atom (defined in 14496-12).
    */
   private static void parseTraf(ContainerAtom traf, SparseArray<TrackBundle> trackBundleArray,
-      int flags, byte[] extendedTypeScratch) throws ParserException {
+                                int flags, byte[] extendedTypeScratch, TimeMap timeMap) throws ParserException {
     if (traf.getChildAtomOfTypeCount(Atom.TYPE_trun) != 1) {
       throw new ParserException("Trun count in traf != 1 (unsupported).");
     }
@@ -489,6 +640,18 @@ public class FragmentedMp4Extractor implements Extractor {
     TrackFragment fragment = trackBundle.fragment;
     long decodeTime = fragment.nextFragmentDecodeTime;
     trackBundle.reset();
+
+    if (timeMap != null) {
+      // If we have a TimeMap, use it to find the decodeTime for the current
+      // surrounding moof.
+      //
+      // The TimeMap returns the decode time in Microseconds, but the
+      // decodeTime here should be unscaled so we scale it back to the
+      // original.
+      decodeTime = Util.scaleLargeTimestamp(
+        timeMap.getTimeUs(trackBundle.track.id, traf.endPosition),
+        trackBundle.track.timescale, C.MICROS_PER_SECOND);
+    }
 
     LeafAtom tfdtAtom = traf.getLeafAtomOfType(Atom.TYPE_tfdt);
     if (tfdtAtom != null && (flags & FLAG_WORKAROUND_IGNORE_TFDT_BOX) == 0) {
@@ -1093,6 +1256,47 @@ public class FragmentedMp4Extractor implements Extractor {
     return atom == Atom.TYPE_moov || atom == Atom.TYPE_trak || atom == Atom.TYPE_mdia
         || atom == Atom.TYPE_minf || atom == Atom.TYPE_stbl || atom == Atom.TYPE_moof
         || atom == Atom.TYPE_traf || atom == Atom.TYPE_mvex || atom == Atom.TYPE_edts;
+  }
+
+  /**
+   * This class exposes a SeekMap over multiple tracks, returning always the
+   * smallest position over all tracks.
+   * <p>
+   * In addition, we expose the capability to map from an offset in the bit stream back the
+   * the presentation time of the moof box that contains the given offset.
+   */
+  private static class TimeMap implements SeekMap {
+    final SparseArray<ChunkIndex> chunkIndex;
+
+    TimeMap() {
+      this.chunkIndex = new SparseArray<>();
+    }
+
+    @Override
+    public boolean isSeekable() {
+      return true;
+    }
+
+    @Override
+    public long getPosition(long timeUs) {
+      long earliestSamplePosition = Long.MAX_VALUE;
+
+      for (int trackIndex = 0; trackIndex < chunkIndex.size(); trackIndex++) {
+        long trackPosition = chunkIndex.valueAt(trackIndex).getPosition(timeUs);
+        if (trackPosition < earliestSamplePosition) {
+          earliestSamplePosition = trackPosition;
+        }
+      }
+      return earliestSamplePosition == Long.MAX_VALUE ? 0 : earliestSamplePosition;
+    }
+
+    public long getTimeUs(int track, long offset) {
+      ChunkIndex chunkIndex = this.chunkIndex.get(track);
+      if (chunkIndex == null) {
+        return 0;
+      }
+      return chunkIndex.timesUs[Util.binarySearchFloor(chunkIndex.offsets, offset, true, true)];
+    }
   }
 
   /**
