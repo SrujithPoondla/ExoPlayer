@@ -15,24 +15,27 @@
  */
 package com.google.android.exoplayer.chunk;
 
+import android.annotation.TargetApi;
+import android.content.Context;
+import android.graphics.Point;
+import android.util.Log;
+import android.view.Display;
+import android.view.WindowManager;
+
 import com.google.android.exoplayer.MediaCodecUtil;
 import com.google.android.exoplayer.MediaCodecUtil.DecoderQueryException;
 import com.google.android.exoplayer.util.MimeTypes;
 import com.google.android.exoplayer.util.Util;
 
-import android.annotation.TargetApi;
-import android.content.Context;
-import android.graphics.Point;
-import android.view.Display;
-import android.view.WindowManager;
-
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Selects from possible video formats.
  */
 public final class VideoFormatSelectorUtil {
+  private static final String TAG = "VideoFormatSelector";
 
   /**
    * If a dimension (i.e. width or height) of a video is greater or equal to this fraction of the
@@ -124,8 +127,14 @@ public final class VideoFormatSelectorUtil {
     if (maxVideoPixelsToRetain != Integer.MAX_VALUE) {
       for (int i = selectedIndexList.size() - 1; i >= 0; i--) {
         Format format = formatWrappers.get(selectedIndexList.get(i)).getFormat();
+        int numPixels = format.width * format.height;
         if (format.width > 0 && format.height > 0
-            && format.width * format.height > maxVideoPixelsToRetain) {
+            && numPixels > maxVideoPixelsToRetain) {
+          //maxVideoPixelsToRetain
+          Log.i(TAG, getRemovalMessage(
+            format,
+            "Larger than screen size. Video pixels > Max pixels: %d > %d",
+            numPixels, maxVideoPixelsToRetain));
           selectedIndexList.remove(i);
         }
       }
@@ -143,10 +152,12 @@ public final class VideoFormatSelectorUtil {
     if (allowedContainerMimeTypes != null
         && !Util.contains(allowedContainerMimeTypes, format.mimeType)) {
       // Filtering format based on its container mime type.
+      Log.i(TAG, getRemovalMessage(format, "Unsupported MIME: %s", format.mimeType));
       return false;
     }
     if (filterHdFormats && (format.width >= 1280 || format.height >= 720)) {
       // Filtering format because it's HD.
+      Log.i(TAG, getRemovalMessage(format, "HD-Representation not permitted"));
       return false;
     }
     if (format.width > 0 && format.height > 0) {
@@ -157,16 +168,28 @@ public final class VideoFormatSelectorUtil {
           videoMediaMimeType = MimeTypes.VIDEO_H264;
         }
         if (format.frameRate > 0) {
-          return MediaCodecUtil.isSizeAndRateSupportedV21(videoMediaMimeType, false, format.width,
-              format.height, format.frameRate);
+          boolean supported = MediaCodecUtil.isSizeAndRateSupportedV21(
+            videoMediaMimeType, false, format.width, format.height, format.frameRate);
+          if(!supported){
+            Log.i(TAG, getRemovalMessage(format, "Size or Rate unsupported by Video-Capabilities"));
+          }
+          return supported;
         } else {
-          return MediaCodecUtil.isSizeSupportedV21(videoMediaMimeType, false, format.width,
-              format.height);
+          boolean supported = MediaCodecUtil.isSizeSupportedV21(
+            videoMediaMimeType, false, format.width, format.height);
+          if(!supported){
+            Log.i(TAG, getRemovalMessage(format, "Size unsupported by Video-Capabilities"));
+          }
+          return supported;
         }
       }
       // Assume the video is H.264.
-      if (format.width * format.height > MediaCodecUtil.maxH264DecodableFrameSize()) {
+      int frameSize = format.width * format.height;
+      int maxFrameSize = MediaCodecUtil.maxH264DecodableFrameSize();
+      if (format.width * format.height > maxFrameSize) {
         // Filtering format because it exceeds the maximum decodable frame size.
+        Log.i(TAG, getRemovalMessage(
+          format, "Frame-Size > Max-Frame-Size (%d > %d)", frameSize, maxFrameSize));
         return false;
       }
     }
@@ -247,4 +270,10 @@ public final class VideoFormatSelectorUtil {
 
   private VideoFormatSelectorUtil() {}
 
+  private static String getRemovalMessage(Format format, String reason, Object ... values){
+    String formattedReason = String.format(reason, values);
+    return String.format(Locale.ENGLISH,
+      "Removed video representation: %dx%d@%d kbps Framerate: %.2f [%s]",
+      format.width, format.height, format.bitrate / 1000, format.frameRate, formattedReason);
+  }
 }
