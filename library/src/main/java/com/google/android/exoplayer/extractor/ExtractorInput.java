@@ -16,6 +16,7 @@
 package com.google.android.exoplayer.extractor;
 
 import com.google.android.exoplayer.C;
+import com.google.android.exoplayer.upstream.DataSource;
 
 import java.io.EOFException;
 import java.io.IOException;
@@ -222,5 +223,12 @@ public interface ExtractorInput {
    * @return The length of the source stream, or {@link C#LENGTH_UNBOUNDED}.
    */
   long getLength();
+
+  /**
+   * Returns the data source of this Extractor input or null.
+   *
+   * @return The data source of this Extractor input or null
+   */
+  DataSource getDataSource();
 
 }

@@ -128,6 +128,9 @@ import java.util.List;
   public static final int TYPE_vpcc = Util.getIntegerCodeForString("vpcC");
   public static final int TYPE_vp09 = Util.getIntegerCodeForString("vp09");
   public static final int TYPE_emsg = Util.getIntegerCodeForString("emsg");
+  public static final int TYPE_mfra = Util.getIntegerCodeForString("mfra");
+  public static final int TYPE_mfro = Util.getIntegerCodeForString("mfro");
+  public static final int TYPE_tfra = Util.getIntegerCodeForString("tfra");
   public static final int TYPE_DASHES = Util.getIntegerCodeForString("----");
 
   public final int type;
