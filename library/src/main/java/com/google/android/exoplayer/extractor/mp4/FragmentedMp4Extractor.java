@@ -343,7 +343,7 @@ public class FragmentedMp4Extractor implements Extractor {
     }
 
     try {
-      File file = new File(uri.toString());
+      File file = new File(uri.getPath());
       long size = file.length();
       FileDataSource source = new FileDataSource();
       long mfraSize = readMfroBox(source, uri, size);
