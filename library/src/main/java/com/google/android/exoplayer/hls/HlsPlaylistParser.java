@@ -191,7 +191,9 @@ public final class HlsPlaylistParser implements UriLoadable.Parser<HlsPlaylist> 
       } else if (line.startsWith(STREAM_INF_TAG)) {
         bitrate = HlsParserUtil.parseIntAttr(line, BANDWIDTH_ATTR_REGEX, BANDWIDTH_ATTR);
         codecs = HlsParserUtil.parseOptionalStringAttr(line, CODECS_ATTR_REGEX);
-        codecs = codecs.replaceAll("aac-lc", "mp4a.40.2");
+        if(codecs != null) {
+          codecs = codecs.replaceAll("aac-lc", "mp4a.40.2");
+        }
         name = HlsParserUtil.parseOptionalStringAttr(line, NAME_ATTR_REGEX);
         String resolutionString = HlsParserUtil.parseOptionalStringAttr(line,
             RESOLUTION_ATTR_REGEX);
